@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.database import engine
 
 from .auth import router as auth_router
+from .middleware import AuditLogMiddleware
 from .routers.engagements import router as engagements_router
 from .routers.findings import router as findings_router
 from .routers.scans import router as scans_router
@@ -32,6 +33,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuditLogMiddleware)
 
 app.include_router(auth_router)
 app.include_router(engagements_router)

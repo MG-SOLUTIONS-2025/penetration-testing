@@ -27,8 +27,31 @@ def nmap_xml_output():
 
 @pytest.fixture
 def nuclei_jsonl_output():
-    return """{"template-id":"tech-detect","matched-at":"https://example.com","info":{"name":"Nginx Detection","severity":"info","tags":["tech"]},"type":"http"}
-{"template-id":"cve-2021-44228","matched-at":"https://example.com:8080","info":{"name":"Log4j RCE","severity":"critical","description":"Remote code execution via Log4Shell","tags":["cve","rce"]},"type":"http","matcher-name":"log4j"}"""
+    import json
+
+    line1 = json.dumps(
+        {
+            "template-id": "tech-detect",
+            "matched-at": "https://example.com",
+            "info": {"name": "Nginx Detection", "severity": "info", "tags": ["tech"]},
+            "type": "http",
+        }
+    )
+    line2 = json.dumps(
+        {
+            "template-id": "cve-2021-44228",
+            "matched-at": "https://example.com:8080",
+            "info": {
+                "name": "Log4j RCE",
+                "severity": "critical",
+                "description": "Remote code execution via Log4Shell",
+                "tags": ["cve", "rce"],
+            },
+            "type": "http",
+            "matcher-name": "log4j",
+        }
+    )
+    return f"{line1}\n{line2}"
 
 
 @pytest.fixture

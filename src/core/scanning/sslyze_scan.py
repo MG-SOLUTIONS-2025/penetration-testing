@@ -48,7 +48,7 @@ def run_sslyze_scan(hostname: str, port: int = 443) -> list[dict]:
                     fp = hashlib.sha256(fp_data.encode()).hexdigest()
                     findings.append(
                         {
-                            "title": f"Deprecated protocol {proto_name} supported on {hostname}:{port}",
+                            "title": f"Deprecated {proto_name} on {hostname}:{port}",
                             "severity": "high",
                             "finding_type": "tls_issue",
                             "target_value": f"{hostname}:{port}",
