@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ engagement.name }} - Penetration Test Report</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 40px; color: #333; line-height: 1.6; }
+        h1 { color: #1a1a2e; border-bottom: 3px solid #e94560; padding-bottom: 10px; }
+        h2 { color: #16213e; margin-top: 30px; }
+        h3 { color: #0f3460; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #16213e; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .severity-critical { color: #dc3545; font-weight: bold; }
+        .severity-high { color: #e94560; font-weight: bold; }
+        .severity-medium { color: #f5a623; font-weight: bold; }
+        .severity-low { color: #4a90d9; }
+        .severity-info { color: #6c757d; }
+        .summary-box { background: #f8f9fa; border-left: 4px solid #16213e; padding: 15px; margin: 20px 0; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 0.9em; }
+        @media print { body { margin: 20px; } }
+    </style>
+</head>
+<body>
+{% block content %}{% endblock %}
+<div class="footer">
+    Generated: {{ generated_at }} | PenTest Platform
+</div>
+</body>
+</html>

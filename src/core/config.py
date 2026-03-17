@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     # App
     app_name: str = "PenTest Platform"
     debug: bool = False
+    registration_enabled: bool = False
+
+    # Redis auth
+    redis_password: str = ""
+
+    # Celery encryption
+    celery_fernet_key: str = ""
+
+    # HIBP
+    hibp_api_key: str = ""
 
 
 settings = Settings()

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Executive Summary</h1>
+<h2>{{ engagement.name }}</h2>
+<p><strong>Client:</strong> {{ engagement.client_name }}</p>
+<p><strong>Period:</strong> {{ engagement.starts_at }} to {{ engagement.ends_at }}</p>
+<p><strong>Authorized by:</strong> {{ engagement.authorized_by }}</p>
+
+<div class="summary-box">
+    <h3>Key Findings</h3>
+    <p>Total vulnerabilities discovered: <strong>{{ total_findings }}</strong></p>
+    <ul>
+        {% for sev, count in severity_counts.items() %}
+        <li><span class="severity-{{ sev }}">{{ sev|upper }}</span>: {{ count }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<h2>Risk Overview</h2>
+<table>
+    <tr><th>Severity</th><th>Count</th></tr>
+    {% for sev in ['critical', 'high', 'medium', 'low', 'info'] %}
+    {% if severity_counts.get(sev) %}
+    <tr><td class="severity-{{ sev }}">{{ sev|upper }}</td><td>{{ severity_counts.get(sev, 0) }}</td></tr>
+    {% endif %}
+    {% endfor %}
+</table>
+{% endblock %}

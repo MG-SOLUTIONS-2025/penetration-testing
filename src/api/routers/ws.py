@@ -2,15 +2,37 @@ import asyncio
 import json
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from jose import JWTError, jwt
 
 from src.core.config import settings
 
 router = APIRouter()
 
 
+async def _authenticate_websocket(websocket: WebSocket) -> str | None:
+    """Validate JWT from query param before accepting WebSocket."""
+    token = websocket.query_params.get("token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+        return user_id
+    except JWTError:
+        return None
+
+
 @router.websocket("/ws/scans/{task_id}")
 async def scan_progress(websocket: WebSocket, task_id: str):
+    # Authenticate before accepting
+    user_id = await _authenticate_websocket(websocket)
+    if user_id is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
 
     r = aioredis.from_url(settings.redis_url)

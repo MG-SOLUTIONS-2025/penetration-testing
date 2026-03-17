@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models import Engagement, Target, User
+from src.core.scanning.sanitize import SanitizationError, validate_target_value
 from src.core.schemas import TargetCreate, TargetRead
 
 from ..deps import get_current_user, get_db
@@ -23,10 +24,16 @@ async def create_target(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Engagement not found")
 
+    # Validate target value against injection
+    try:
+        validated_value = validate_target_value(body.value, body.target_type)
+    except SanitizationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     target = Target(
         engagement_id=engagement_id,
         target_type=body.target_type,
-        value=body.value,
+        value=validated_value,
         is_in_scope=body.is_in_scope,
         metadata_=body.metadata,
     )

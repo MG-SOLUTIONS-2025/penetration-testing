@@ -10,7 +10,7 @@ from src.core.models import AuditLog
 
 
 class AuditLogMiddleware(BaseHTTPMiddleware):
-    """Logs all mutating API requests to the audit_log table."""
+    """Logs all mutating API requests to both audit_log and audit_log_worm tables."""
 
     MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -41,9 +41,11 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         # Determine action from method + path
         path = request.url.path
         action = f"{request.method.lower()}.{path.strip('/').replace('/', '.')}"
+        client_ip = request.client.host if request.client else None
 
         try:
             async with async_session() as session:
+                # Write to standard audit log
                 log_entry = AuditLog(
                     user_id=user_id,
                     action=action,
@@ -52,11 +54,28 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                         "method": request.method,
                         "path": path,
                         "status_code": response.status_code,
-                        "client": request.client.host if request.client else None,
+                        "client": client_ip,
                         "timestamp": datetime.now(UTC).isoformat(),
                     },
                 )
                 session.add(log_entry)
+
+                # Write to WORM audit log (hash-chained)
+                from src.core.audit import write_worm_entry
+
+                await write_worm_entry(
+                    session,
+                    action=action,
+                    user_id=user_id,
+                    resource_type=_extract_resource_type(path),
+                    detail={
+                        "method": request.method,
+                        "path": path,
+                        "status_code": response.status_code,
+                    },
+                    client_ip=client_ip,
+                )
+
                 await session.commit()
         except Exception:
             pass  # Audit logging should never break the request

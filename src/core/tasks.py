@@ -13,6 +13,12 @@ from src.core.scanning.headers import check_headers
 from src.core.scanning.nmap import parse_nmap_xml
 from src.core.scanning.nuclei import parse_nuclei_jsonl
 from src.core.scanning.runner import ToolRunner
+from src.core.scanning.sanitize import (
+    validate_nuclei_severity,
+    validate_nuclei_templates,
+    validate_ports,
+    validate_target_value,
+)
 from src.core.scanning.subfinder import parse_subfinder_jsonl
 
 # Sync engine for Celery workers (Celery doesn't support async)
@@ -111,13 +117,27 @@ def run_nmap_scan(self, scan_id: str):
             _publish_progress(scan_id, 10, "Validating scope...")
             _validate_scope_sync(db, target.value, scan.engagement_id)
 
+            # Sanitize inputs
+            validated_target = validate_target_value(target.value, target.target_type)
+
+            config = scan.config or {}
+            ports = validate_ports(config.get("ports", "1-1000"))
+            extra_args = validate_nmap_args(config.get("extra_args", ""))
+
             _publish_progress(scan_id, 20, "Starting Nmap scan...")
 
-            # Build nmap command
-            config = scan.config or {}
-            ports = config.get("ports", "1-1000")
-            extra_args = config.get("extra_args", "")
-            cmd = f"-sV -sC --script=vuln -p {ports} {extra_args} -oX - {target.value}"
+            # Build command as list (no shell injection possible)
+            cmd = [
+                "-sV",
+                "-sC",
+                "--script=vuln",
+                "-p",
+                ports,
+                *extra_args,
+                "-oX",
+                "-",
+                validated_target,
+            ]
 
             result = runner.run_in_container("instrumentisto/nmap", cmd, timeout=600)
 
@@ -139,6 +159,15 @@ def run_nmap_scan(self, scan_id: str):
             raise
 
 
+def validate_nmap_args(args_str: str) -> list[str]:
+    """Wrapper to handle string->list conversion for nmap args from config."""
+    from src.core.scanning.sanitize import validate_nmap_args as _validate
+
+    if not args_str:
+        return []
+    return _validate(args_str)
+
+
 @shared_task(bind=True, name="src.core.tasks.run_subfinder_scan")
 def run_subfinder_scan(self, scan_id: str):
     with Session(sync_engine) as db:
@@ -150,8 +179,11 @@ def run_subfinder_scan(self, scan_id: str):
             _publish_progress(scan_id, 10, "Validating scope...")
             _validate_scope_sync(db, target.value, scan.engagement_id)
 
+            # Sanitize inputs
+            validated_target = validate_target_value(target.value, target.target_type)
+
             _publish_progress(scan_id, 20, "Starting Subfinder scan...")
-            cmd = f"-d {target.value} -json -silent"
+            cmd = ["-d", validated_target, "-json", "-silent"]
             result = runner.run_in_container("projectdiscovery/subfinder", cmd, timeout=300)
 
             _publish_progress(scan_id, 70, "Parsing results...")
@@ -180,13 +212,17 @@ def run_nuclei_scan(self, scan_id: str):
             _publish_progress(scan_id, 10, "Validating scope...")
             _validate_scope_sync(db, target.value, scan.engagement_id)
 
-            _publish_progress(scan_id, 20, "Starting Nuclei scan...")
+            # Sanitize inputs
+            validated_target = validate_target_value(target.value, target.target_type)
+
             config = scan.config or {}
-            severity = config.get("severity", "critical,high,medium,low")
-            templates = config.get("templates", "")
-            cmd = f"-u {target.value} -jsonl -severity {severity}"
+            severity = validate_nuclei_severity(config.get("severity", "critical,high,medium,low"))
+            templates = validate_nuclei_templates(config.get("templates", ""))
+
+            _publish_progress(scan_id, 20, "Starting Nuclei scan...")
+            cmd = ["-u", validated_target, "-jsonl", "-severity", severity]
             if templates:
-                cmd += f" -t {templates}"
+                cmd.extend(["-t", templates])
 
             result = runner.run_in_container("projectdiscovery/nuclei", cmd, timeout=900)
 
@@ -218,11 +254,14 @@ def run_sslyze_scan(self, scan_id: str):
             _publish_progress(scan_id, 10, "Validating scope...")
             _validate_scope_sync(db, target.value, scan.engagement_id)
 
+            # Sanitize target
+            validated_target = validate_target_value(target.value, target.target_type)
+
             _publish_progress(scan_id, 20, "Starting SSLyze scan...")
             config = scan.config or {}
             port = config.get("port", 443)
 
-            findings_data = _run_sslyze(target.value, port)
+            findings_data = _run_sslyze(validated_target, port)
             for f in findings_data:
                 f["engagement_id"] = str(scan.engagement_id)
 
@@ -249,8 +288,11 @@ def run_headers_scan(self, scan_id: str):
             _publish_progress(scan_id, 10, "Validating scope...")
             _validate_scope_sync(db, target.value, scan.engagement_id)
 
+            # Sanitize target
+            validated_target = validate_target_value(target.value, target.target_type)
+
             _publish_progress(scan_id, 20, "Checking security headers...")
-            url = target.value if "://" in target.value else f"https://{target.value}"
+            url = validated_target if "://" in validated_target else f"https://{validated_target}"
             findings_data = check_headers(url)
             for f in findings_data:
                 f["engagement_id"] = str(scan.engagement_id)
@@ -265,6 +307,194 @@ def run_headers_scan(self, scan_id: str):
             _update_scan_status(db, scan_id, "failed", str(e))
             _publish_progress(scan_id, -1, f"Failed: {e}")
             raise
+
+
+def _run_container_scan(
+    scan_id: str,
+    image: str,
+    cmd: list[str],
+    parse_fn,
+    timeout: int = 600,
+    scan_label: str = "scan",
+):
+    """Generic helper for container-based scans."""
+    with Session(sync_engine) as db:
+        scan = db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id))).scalar_one()
+        target = db.execute(select(Target).where(Target.id == scan.target_id)).scalar_one()
+
+        try:
+            _update_scan_status(db, scan_id, "running")
+            _publish_progress(scan_id, 10, "Validating scope...")
+            _validate_scope_sync(db, target.value, scan.engagement_id)
+
+            validated_target = validate_target_value(target.value, target.target_type)
+
+            _publish_progress(scan_id, 20, f"Starting {scan_label}...")
+            # Replace placeholder in command with validated target
+            final_cmd = [validated_target if c == "__TARGET__" else c for c in cmd]
+
+            result = runner.run_in_container(image, final_cmd, timeout=timeout)
+
+            _publish_progress(scan_id, 70, "Parsing results...")
+            findings = parse_fn(result.stdout, str(scan.engagement_id))
+
+            _publish_progress(scan_id, 90, f"Saving {len(findings)} findings...")
+            _save_findings(db, scan_id, findings)
+
+            _update_scan_status(db, scan_id, "completed")
+            _publish_progress(scan_id, 100, f"Completed with {len(findings)} findings")
+
+        except Exception as e:
+            _update_scan_status(db, scan_id, "failed", str(e))
+            _publish_progress(scan_id, -1, f"Failed: {e}")
+            raise
+
+
+@shared_task(bind=True, name="src.core.tasks.run_amass_scan")
+def run_amass_scan(self, scan_id: str):
+    from src.core.scanning.amass import parse_amass_jsonl
+
+    _run_container_scan(
+        scan_id,
+        "caffix/amass",
+        ["enum", "-d", "__TARGET__", "-json", "-"],
+        parse_amass_jsonl,
+        timeout=900,
+        scan_label="Amass",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_masscan_scan")
+def run_masscan_scan(self, scan_id: str):
+    from src.core.scanning.masscan import parse_masscan_json, validate_masscan_rate
+
+    with Session(sync_engine) as db:
+        scan = db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id))).scalar_one()
+        config = scan.config or {}
+        rate = validate_masscan_rate(config.get("rate", 1000))
+        ports = validate_ports(config.get("ports", "1-65535"))
+
+    _run_container_scan(
+        scan_id,
+        "adguard/masscan",
+        ["-p", ports, "--rate", str(rate), "-oJ", "-", "__TARGET__"],
+        parse_masscan_json,
+        timeout=600,
+        scan_label="Masscan",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_nikto_scan")
+def run_nikto_scan(self, scan_id: str):
+    from src.core.scanning.nikto import parse_nikto_json
+
+    _run_container_scan(
+        scan_id,
+        "sullo/nikto",
+        ["-h", "__TARGET__", "-Format", "json", "-o", "-"],
+        parse_nikto_json,
+        timeout=900,
+        scan_label="Nikto",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_ffuf_scan")
+def run_ffuf_scan(self, scan_id: str):
+    from src.core.scanning.ffuf import parse_ffuf_json
+
+    with Session(sync_engine) as db:
+        scan = db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id))).scalar_one()
+        config = scan.config or {}
+        wordlist = config.get("wordlist", "/usr/share/wordlists/common.txt")
+        rate = min(config.get("rate", 100), 500)  # Safety cap
+
+    _run_container_scan(
+        scan_id,
+        "ghcr.io/ffuf/ffuf",
+        [
+            "-u",
+            "__TARGET__/FUZZ",
+            "-w",
+            wordlist,
+            "-of",
+            "json",
+            "-o",
+            "/dev/stdout",
+            "-rate",
+            str(rate),
+        ],
+        parse_ffuf_json,
+        timeout=600,
+        scan_label="ffuf",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_sqlmap_scan")
+def run_sqlmap_scan(self, scan_id: str):
+    from src.core.scanning.sqlmap import parse_sqlmap_json, validate_sqlmap_options
+
+    with Session(sync_engine) as db:
+        scan = db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id))).scalar_one()
+        config = scan.config or {}
+        options = validate_sqlmap_options(config.get("options", {}))
+
+    cmd = ["-u", "__TARGET__", "--batch", "--output-dir=/tmp/sqlmap"]
+    if options.get("level"):
+        cmd.extend(["--level", str(options["level"])])
+    if options.get("risk"):
+        cmd.extend(["--risk", str(options["risk"])])
+
+    _run_container_scan(
+        scan_id,
+        "sqlmapproject/sqlmap",
+        cmd,
+        parse_sqlmap_json,
+        timeout=900,
+        scan_label="SQLMap",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_wpscan_scan")
+def run_wpscan_scan(self, scan_id: str):
+    from src.core.scanning.wpscan import parse_wpscan_json
+
+    _run_container_scan(
+        scan_id,
+        "wpscanteam/wpscan",
+        ["--url", "__TARGET__", "--format", "json", "--no-banner"],
+        parse_wpscan_json,
+        timeout=600,
+        scan_label="WPScan",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.run_zap_scan")
+def run_zap_scan(self, scan_id: str):
+    from src.core.scanning.zap import parse_zap_json
+
+    _run_container_scan(
+        scan_id,
+        "zaproxy/zap-stable",
+        ["zap-baseline.py", "-t", "__TARGET__", "-J", "/dev/stdout"],
+        parse_zap_json,
+        timeout=1800,
+        scan_label="OWASP ZAP",
+    )
+
+
+@shared_task(bind=True, name="src.core.tasks.generate_report")
+def generate_report(
+    self, engagement_id: str, template: str = "full.html", output_format: str = "html"
+):
+    """Generate a report and store/return it."""
+    from src.core.reports.generator import ReportGenerator
+
+    generator = ReportGenerator()
+    with Session(sync_engine) as db:
+        if output_format == "pdf":
+            generator.generate_pdf(db, uuid.UUID(engagement_id), template)
+        else:
+            generator.generate_html(db, uuid.UUID(engagement_id), template)
 
 
 @shared_task(bind=True, name="src.core.tasks.push_to_defectdojo")
@@ -289,7 +519,6 @@ def push_to_defectdojo(self, engagement_id: str):
                 engagement.ends_at.isoformat()[:10],
             )
 
-            # Gather scans and import raw output where available
             scans = (
                 db.execute(
                     select(Scan).where(

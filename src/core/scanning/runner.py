@@ -1,18 +1,38 @@
-import shlex
 import subprocess
+
+ALLOWED_IMAGES: frozenset[str] = frozenset(
+    {
+        "instrumentisto/nmap",
+        "projectdiscovery/subfinder",
+        "projectdiscovery/nuclei",
+        "caffix/amass",
+        "adguard/masscan",
+        "sullo/nikto",
+        "ghcr.io/ffuf/ffuf",
+        "sqlmapproject/sqlmap",
+        "wpscanteam/wpscan",
+        "zaproxy/zap-stable",
+    }
+)
+
+
+class ImageNotAllowedError(ValueError):
+    pass
 
 
 class ToolRunner:
     def run_in_container(
         self,
         image: str,
-        command: str,
+        command: list[str],
         timeout: int = 300,
         network: str = "host",
         memory: str = "1g",
         cpus: str = "1.0",
     ) -> subprocess.CompletedProcess:
-        safe_cmd = shlex.split(command)
+        if image not in ALLOWED_IMAGES:
+            raise ImageNotAllowedError(f"Image not allowed: {image}")
+
         docker_cmd = [
             "docker",
             "run",
@@ -20,8 +40,12 @@ class ToolRunner:
             f"--network={network}",
             f"--memory={memory}",
             f"--cpus={cpus}",
+            "--no-new-privileges",
+            "--cap-drop=ALL",
+            "--pids-limit=256",
+            "--read-only",
             image,
-            *safe_cmd,
+            *command,
         ]
         return subprocess.run(
             docker_cmd,

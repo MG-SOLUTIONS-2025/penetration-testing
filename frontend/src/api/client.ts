@@ -109,7 +109,8 @@ export const getFindings = (params?: {
 // WebSocket
 export const connectScanWS = (taskId: string): WebSocket => {
   const wsBase = API_BASE.replace("http", "ws");
-  return new WebSocket(`${wsBase}/ws/scans/${taskId}`);
+  const token = localStorage.getItem("token");
+  return new WebSocket(`${wsBase}/ws/scans/${taskId}?token=${token || ""}`);
 };
 
 // Types

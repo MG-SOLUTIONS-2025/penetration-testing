@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Penetration Test Report</h1>
+<h2>{{ engagement.name }}</h2>
+<p><strong>Client:</strong> {{ engagement.client_name }}</p>
+<p><strong>Period:</strong> {{ engagement.starts_at }} to {{ engagement.ends_at }}</p>
+<p><strong>Authorized by:</strong> {{ engagement.authorized_by }}</p>
+
+<div class="summary-box">
+    <h3>Summary</h3>
+    <p>Total findings: <strong>{{ total_findings }}</strong></p>
+    <p>Scans completed: <strong>{{ scans|length }}</strong></p>
+    <ul>
+        {% for sev, count in severity_counts.items() %}
+        <li><span class="severity-{{ sev }}">{{ sev|upper }}</span>: {{ count }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<h2>Scans Performed</h2>
+<table>
+    <tr><th>Type</th><th>Status</th><th>Started</th><th>Completed</th></tr>
+    {% for scan in scans %}
+    <tr>
+        <td>{{ scan.scan_type }}</td>
+        <td>{{ scan.status }}</td>
+        <td>{{ scan.started_at or '-' }}</td>
+        <td>{{ scan.completed_at or '-' }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+<h2>Detailed Findings</h2>
+{% for finding in findings %}
+<div style="margin-bottom: 20px; page-break-inside: avoid;">
+    <h3><span class="severity-{{ finding.severity }}">[{{ finding.severity|upper }}]</span> {{ finding.title }}</h3>
+    <p><strong>Type:</strong> {{ finding.finding_type }} | <strong>Target:</strong> {{ finding.target_value }}</p>
+    {% if finding.cvss_score %}
+    <p><strong>CVSS:</strong> {{ finding.cvss_score }} ({{ finding.cvss_vector }})</p>
+    {% endif %}
+    {% if finding.cwe_id %}
+    <p><strong>CWE:</strong> CWE-{{ finding.cwe_id }}</p>
+    {% endif %}
+    {% if finding.detail %}
+    <details>
+        <summary>Details</summary>
+        <pre>{{ finding.detail }}</pre>
+    </details>
+    {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

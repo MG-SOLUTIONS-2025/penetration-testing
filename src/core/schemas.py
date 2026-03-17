@@ -15,6 +15,16 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class TokenPairResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 class UserRead(BaseModel):
     id: uuid.UUID
     email: str
@@ -41,6 +51,8 @@ class EngagementCreate(BaseModel):
     starts_at: datetime
     ends_at: datetime
     notes: str | None = None
+    allow_ddos_testing: bool = False
+    allow_exploitation: bool = False
 
 
 class EngagementUpdate(BaseModel):
@@ -50,6 +62,8 @@ class EngagementUpdate(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     notes: str | None = None
+    allow_ddos_testing: bool | None = None
+    allow_exploitation: bool | None = None
 
 
 class EngagementRead(BaseModel):
@@ -61,6 +75,8 @@ class EngagementRead(BaseModel):
     starts_at: datetime
     ends_at: datetime
     notes: str | None
+    allow_ddos_testing: bool
+    allow_exploitation: bool
     created_by: uuid.UUID
     created_at: datetime
 
@@ -91,7 +107,7 @@ class TargetRead(BaseModel):
 class ScanCreate(BaseModel):
     engagement_id: uuid.UUID
     target_id: uuid.UUID | None = None
-    scan_type: str  # nmap, subfinder, nuclei, sslyze, headers
+    scan_type: str
     config: dict | None = None
 
 
@@ -103,6 +119,7 @@ class ScanRead(BaseModel):
     status: str
     celery_task_id: str | None
     config: dict | None
+    baseline_scan_id: uuid.UUID | None = None
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
@@ -125,6 +142,15 @@ class FindingRead(BaseModel):
     raw_output: str | None
     fingerprint: str
     defectdojo_finding_id: int | None
+    cvss_vector: str | None = None
+    cvss_score: float | None = None
+    vpr_score: float | None = None
+    vpr_factors: dict | None = None
+    cwe_id: int | None = None
+    compliance_mappings: dict | None = None
+    status: str = "new"
+    first_seen_at: datetime | None = None
+    resolved_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

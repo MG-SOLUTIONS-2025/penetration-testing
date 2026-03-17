@@ -6,12 +6,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Create non-root user
+RUN groupadd -r pentest && useradd -r -g pentest -d /app -s /sbin/nologin pentest
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./
 RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 
 COPY . .
+
+RUN chown -R pentest:pentest /app
+
+USER pentest
 
 EXPOSE 8000
 
