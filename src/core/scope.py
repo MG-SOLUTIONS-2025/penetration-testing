@@ -35,6 +35,9 @@ async def check_engagement_active(db: AsyncSession, engagement_id: uuid.UUID) ->
 def _extract_host(value: str) -> str:
     if "://" in value:
         return urlparse(value).hostname or value
+    # Strip port if present (e.g. "example.com:8080") but not IPv6 literals
+    if ":" in value and not value.startswith("["):
+        return value.rsplit(":", 1)[0]
     return value
 
 
@@ -97,7 +100,7 @@ async def validate_target(
             detail={"target_value": target_value, "engagement_id": str(engagement_id)},
         )
     )
-    await db.commit()
+    await db.flush()
 
     raise ScopeViolationError(
         f"Target {target_value} is not in scope for engagement {engagement_id}"

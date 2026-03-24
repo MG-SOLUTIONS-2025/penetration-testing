@@ -1,45 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
-
-
-# --- Auth ---
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class TokenPairResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
-
-class UserRead(BaseModel):
-    id: uuid.UUID
-    email: str
-    full_name: str
-    is_active: bool
-    is_admin: bool
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str
-    full_name: str
+from pydantic import BaseModel
 
 
 # --- Engagements ---
@@ -77,7 +39,7 @@ class EngagementRead(BaseModel):
     notes: str | None
     allow_ddos_testing: bool
     allow_exploitation: bool
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -123,7 +85,7 @@ class ScanRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     error_message: str | None
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

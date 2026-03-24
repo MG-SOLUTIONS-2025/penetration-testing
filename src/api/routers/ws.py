@@ -1,43 +1,39 @@
 import asyncio
 import json
+import uuid
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
-from jose import JWTError, jwt
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
 
 from src.core.config import settings
+from src.core.database import async_session
+from src.core.models import Scan
 
 router = APIRouter()
 
 
-async def _authenticate_websocket(websocket: WebSocket) -> str | None:
-    """Validate JWT from query param before accepting WebSocket."""
-    token = websocket.query_params.get("token")
-    if not token:
-        return None
+@router.websocket("/ws/scans/{scan_id}")
+async def scan_progress(websocket: WebSocket, scan_id: str):
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            return None
-        return user_id
-    except JWTError:
-        return None
+        scan_uuid = uuid.UUID(scan_id)
+    except ValueError:
+        await websocket.close(code=1008)
+        return
 
+    async with async_session() as db:
+        scan_result = await db.execute(select(Scan).where(Scan.id == scan_uuid))
+        scan = scan_result.scalar_one_or_none()
 
-@router.websocket("/ws/scans/{task_id}")
-async def scan_progress(websocket: WebSocket, task_id: str):
-    # Authenticate before accepting
-    user_id = await _authenticate_websocket(websocket)
-    if user_id is None:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    if scan is None:
+        await websocket.close(code=1008)
         return
 
     await websocket.accept()
 
     r = aioredis.from_url(settings.redis_url)
     pubsub = r.pubsub()
-    await pubsub.subscribe(f"scan:{task_id}")
+    await pubsub.subscribe(f"scan:{scan_id}")
 
     try:
         while True:
@@ -54,5 +50,5 @@ async def scan_progress(websocket: WebSocket, task_id: str):
     except WebSocketDisconnect:
         pass
     finally:
-        await pubsub.unsubscribe(f"scan:{task_id}")
+        await pubsub.unsubscribe(f"scan:{scan_id}")
         await r.aclose()

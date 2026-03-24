@@ -4,11 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models import Finding, User
+from src.core.models import Finding
 from src.core.schemas import FindingRead, PaginatedResponse
 from src.worker.celery_app import celery_app
 
-from ..deps import get_current_user, get_db
+from ..deps import get_db
 
 router = APIRouter(prefix="/api/v1/findings", tags=["findings"])
 
@@ -22,7 +22,6 @@ async def list_findings(
     page: int = 1,
     page_size: int = 50,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     query = select(Finding)
     count_query = select(func.count(Finding.id))
@@ -55,9 +54,9 @@ async def list_findings(
 async def get_finding(
     finding_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Finding).where(Finding.id == finding_id))
+    query = select(Finding).where(Finding.id == finding_id)
+    result = await db.execute(query)
     finding = result.scalar_one_or_none()
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -68,7 +67,6 @@ async def get_finding(
 async def sync_to_defectdojo(
     engagement_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     task = celery_app.send_task("src.core.tasks.push_to_defectdojo", args=[str(engagement_id)])
     return {"task_id": task.id, "status": "dispatched"}

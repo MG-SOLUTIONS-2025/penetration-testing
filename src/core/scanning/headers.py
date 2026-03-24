@@ -2,6 +2,8 @@ import hashlib
 
 import httpx
 
+from src.core.config import settings
+
 HEADER_CHECKS = {
     "Strict-Transport-Security": {
         "severity": "high",
@@ -59,7 +61,7 @@ def check_headers(url: str) -> list[dict]:
     findings = []
 
     try:
-        resp = httpx.get(url, follow_redirects=True, timeout=15.0, verify=False)
+        resp = httpx.get(url, follow_redirects=True, timeout=15.0, verify=settings.headers_scan_verify_ssl)
     except httpx.RequestError as e:
         return [
             {

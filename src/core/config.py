@@ -11,11 +11,6 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # JWT
-    secret_key: str = "changeme"
-    access_token_expire_minutes: int = 30
-    algorithm: str = "HS256"
-
     # DefectDojo
     defectdojo_url: str = "http://localhost:8080"
     defectdojo_api_key: str = ""
@@ -23,7 +18,6 @@ class Settings(BaseSettings):
     # App
     app_name: str = "PenTest Platform"
     debug: bool = False
-    registration_enabled: bool = False
 
     # Redis auth
     redis_password: str = ""
@@ -33,6 +27,19 @@ class Settings(BaseSettings):
 
     # HIBP
     hibp_api_key: str = ""
+
+    # Database connection pooling
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_recycle: int = 3600
+
+    # SSL verification for header scans
+    headers_scan_verify_ssl: bool = True
+
+    # Metasploit RPC
+    metasploit_host: str = "msfrpcd"
+    metasploit_port: int = 55553
+    metasploit_password: str = ""
 
 
 settings = Settings()

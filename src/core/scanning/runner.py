@@ -12,6 +12,7 @@ ALLOWED_IMAGES: frozenset[str] = frozenset(
         "sqlmapproject/sqlmap",
         "wpscanteam/wpscan",
         "zaproxy/zap-stable",
+        "grafana/k6",
     }
 )
 

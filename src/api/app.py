@@ -1,14 +1,17 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from sqlalchemy import text
 
-from src.core.database import engine
+from src.core.config import settings
+from src.core.database import async_session, engine
 
-from .auth import router as auth_router
 from .middleware import AuditLogMiddleware
 from .routers.compliance import router as compliance_router
 from .routers.credentials import router as credentials_router
@@ -22,14 +25,14 @@ from .routers.schedules import router as schedules_router
 from .routers.targets import router as targets_router
 from .routers.ws import router as ws_router
 
-limiter = Limiter(key_func=get_remote_address)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
     await engine.dispose()
 
+
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="PenTest Platform",
@@ -49,7 +52,6 @@ app.add_middleware(
 )
 app.add_middleware(AuditLogMiddleware)
 
-app.include_router(auth_router)
 app.include_router(engagements_router)
 app.include_router(targets_router)
 app.include_router(scans_router)
@@ -65,4 +67,19 @@ app.include_router(resilience_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    checks = {"api": "ok", "database": "unknown", "redis": "unknown"}
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+    try:
+        r = aioredis.from_url(settings.redis_url)
+        await r.ping()
+        await r.aclose()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+    status_code = 200 if all(v == "ok" for v in checks.values()) else 503
+    return JSONResponse(content=checks, status_code=status_code)

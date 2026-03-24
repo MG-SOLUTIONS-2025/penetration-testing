@@ -3,15 +3,15 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models import Scan, Target, User
-from src.core.schemas import ScanCreate, ScanRead
+from src.core.models import Scan, Target
+from src.core.schemas import PaginatedResponse, ScanCreate, ScanRead
 from src.core.scope import EngagementExpiredError, check_engagement_active
 from src.worker.celery_app import celery_app
 
-from ..deps import get_current_user, get_db
+from ..deps import get_db, get_engagement_or_403
 
 router = APIRouter(prefix="/api/v1/scans", tags=["scans"])
 limiter = Limiter(key_func=get_remote_address)
@@ -38,12 +38,12 @@ async def create_scan(
     request: Request,
     body: ScanCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     if body.scan_type not in SCAN_TASK_MAP:
         raise HTTPException(status_code=400, detail=f"Invalid scan type: {body.scan_type}")
 
     # Validate engagement is active
+    await get_engagement_or_403(db, body.engagement_id)
     try:
         await check_engagement_active(db, body.engagement_id)
     except (EngagementExpiredError, ValueError) as e:
@@ -69,7 +69,6 @@ async def create_scan(
         scan_type=body.scan_type,
         status="pending",
         config=body.config,
-        created_by=user.id,
     )
     db.add(scan)
     await db.flush()
@@ -84,34 +83,44 @@ async def create_scan(
     return scan
 
 
-@router.get("/", response_model=list[ScanRead])
+@router.get("/", response_model=PaginatedResponse[ScanRead])
 async def list_scans(
     engagement_id: uuid.UUID | None = None,
     status: str | None = None,
     scan_type: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     query = select(Scan)
+    count_query = select(func.count(Scan.id))
+
     if engagement_id:
         query = query.where(Scan.engagement_id == engagement_id)
+        count_query = count_query.where(Scan.engagement_id == engagement_id)
     if status:
         query = query.where(Scan.status == status)
+        count_query = count_query.where(Scan.status == status)
     if scan_type:
         query = query.where(Scan.scan_type == scan_type)
-    query = query.order_by(Scan.created_at.desc())
+        count_query = count_query.where(Scan.scan_type == scan_type)
+
+    total = (await db.execute(count_query)).scalar() or 0
+    query = query.order_by(Scan.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    items = result.scalars().all()
+    return PaginatedResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/{scan_id}", response_model=ScanRead)
 async def get_scan(
     scan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Scan).where(Scan.id == scan_id))
+    result = await db.execute(
+        select(Scan).where(Scan.id == scan_id)
+    )
     scan = result.scalar_one_or_none()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -122,9 +131,10 @@ async def get_scan(
 async def cancel_scan(
     scan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Scan).where(Scan.id == scan_id))
+    result = await db.execute(
+        select(Scan).where(Scan.id == scan_id)
+    )
     scan = result.scalar_one_or_none()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -137,17 +147,42 @@ async def cancel_scan(
     return {"status": "cancelled", "scan_id": str(scan_id)}
 
 
+@router.get("/export/sarif")
+async def export_sarif(
+    engagement_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export findings as SARIF 2.1.0 JSON."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as SyncSession
+
+    from src.core.config import settings
+    from src.core.export.sarif import findings_to_sarif
+
+    await get_engagement_or_403(db, engagement_id)
+
+    sync_engine = create_engine(settings.database_url_sync)
+    try:
+        with SyncSession(sync_engine) as sync_db:
+            sarif = findings_to_sarif(sync_db, engagement_id)
+    finally:
+        sync_engine.dispose()
+
+    return sarif
+
+
 @router.get("/{scan_id}/diff")
 async def scan_diff(
     scan_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     """Get diff between this scan and its baseline."""
     from src.core.diffing import diff_scans
     from src.core.models import Finding
 
-    result = await db.execute(select(Scan).where(Scan.id == scan_id))
+    result = await db.execute(
+        select(Scan).where(Scan.id == scan_id)
+    )
     scan = result.scalar_one_or_none()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
@@ -174,23 +209,3 @@ async def scan_diff(
         "resolved": diff_result.resolved,
         "unchanged": diff_result.unchanged,
     }
-
-
-@router.get("/export/sarif")
-async def export_sarif(
-    engagement_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Export findings as SARIF 2.1.0 JSON."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SyncSession
-
-    from src.core.config import settings
-    from src.core.export.sarif import findings_to_sarif
-
-    sync_engine = create_engine(settings.database_url_sync)
-    with SyncSession(sync_engine) as sync_db:
-        sarif = findings_to_sarif(sync_db, engagement_id)
-
-    return sarif

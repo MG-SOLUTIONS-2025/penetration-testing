@@ -1,4 +1,4 @@
-"""DDoS resilience testing endpoints — admin-only, requires engagement flag."""
+"""DDoS resilience testing endpoints."""
 
 import uuid
 
@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.ddos.controller import ResilienceController
-from src.core.models import Engagement, User
+from src.core.models import Engagement
+from src.worker.celery_app import celery_app
 
-from ..deps import get_current_admin_user, get_db
+from ..deps import get_db
 
 router = APIRouter(prefix="/api/v1/resilience", tags=["resilience"])
 
@@ -28,9 +29,8 @@ class ResilienceTestRequest(BaseModel):
 async def start_resilience_test(
     body: ResilienceTestRequest,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin_user),
 ):
-    """Start a DDoS resilience test — admin only, requires engagement flag."""
+    """Start a DDoS resilience test — requires engagement flag."""
     result = await db.execute(select(Engagement).where(Engagement.id == body.engagement_id))
     engagement = result.scalar_one_or_none()
     if not engagement:
@@ -43,15 +43,8 @@ async def start_resilience_test(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Validate command can be built (validates config)
-    controller.build_k6_command(body.target_url, body.rps, body.duration_seconds)
-
-    # TODO: dispatch via Celery task with real-time WebSocket updates
-    return {
-        "status": "dispatched",
-        "config": {
-            "target_url": body.target_url,
-            "rps": body.rps,
-            "duration_seconds": body.duration_seconds,
-        },
-    }
+    task = celery_app.send_task(
+        "src.core.tasks.run_ddos_test",
+        args=[str(body.engagement_id), body.target_url, body.rps, body.duration_seconds],
+    )
+    return {"status": "dispatched", "task_id": task.id}

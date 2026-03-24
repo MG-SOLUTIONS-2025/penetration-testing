@@ -7,9 +7,9 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models import CredentialExposure, User
+from src.core.models import CredentialExposure
 
-from ..deps import get_current_user, get_db
+from ..deps import get_db, get_engagement_or_403
 
 router = APIRouter(prefix="/api/v1/credentials", tags=["credentials"])
 
@@ -34,9 +34,10 @@ class ExposureRead(BaseModel):
 async def check_credentials(
     body: CredentialCheckRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
     """Check an email against HIBP for known breaches."""
+    await get_engagement_or_403(db, body.engagement_id)
+
     from src.core.hibp.checker import check_email_breaches
 
     try:
@@ -68,8 +69,9 @@ async def check_credentials(
 async def list_exposures(
     engagement_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
+    await get_engagement_or_403(db, engagement_id)
+
     result = await db.execute(
         select(CredentialExposure)
         .where(CredentialExposure.engagement_id == engagement_id)

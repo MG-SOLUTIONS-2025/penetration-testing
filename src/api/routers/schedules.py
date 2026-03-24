@@ -1,15 +1,16 @@
 """Celery Beat scheduled scan CRUD endpoints."""
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models import ScanSchedule, User
+from src.core.models import ScanSchedule
 
-from ..deps import get_current_user, get_db
+from ..deps import get_db, get_engagement_or_403
 
 router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 
@@ -46,15 +47,15 @@ class ScheduleRead(BaseModel):
 async def create_schedule(
     body: ScheduleCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
+    await get_engagement_or_403(db, body.engagement_id)
+
     schedule = ScanSchedule(
         engagement_id=body.engagement_id,
         target_id=body.target_id,
         scan_type=body.scan_type,
         config=body.config,
         cron_expression=body.cron_expression,
-        created_by=user.id,
     )
     db.add(schedule)
     await db.flush()
@@ -66,9 +67,8 @@ async def create_schedule(
 async def list_schedules(
     engagement_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    query = select(ScanSchedule)
+    query = select(ScanSchedule).where(ScanSchedule.deleted_at.is_(None))
     if engagement_id:
         query = query.where(ScanSchedule.engagement_id == engagement_id)
     result = await db.execute(query)
@@ -80,9 +80,13 @@ async def update_schedule(
     schedule_id: uuid.UUID,
     body: ScheduleUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(ScanSchedule).where(ScanSchedule.id == schedule_id))
+    result = await db.execute(
+        select(ScanSchedule).where(
+            ScanSchedule.id == schedule_id,
+            ScanSchedule.deleted_at.is_(None),
+        )
+    )
     schedule = result.scalar_one_or_none()
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
@@ -99,10 +103,16 @@ async def update_schedule(
 async def delete_schedule(
     schedule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(ScanSchedule).where(ScanSchedule.id == schedule_id))
+    result = await db.execute(
+        select(ScanSchedule).where(
+            ScanSchedule.id == schedule_id,
+            ScanSchedule.deleted_at.is_(None),
+        )
+    )
     schedule = result.scalar_one_or_none()
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    await db.delete(schedule)
+    schedule.deleted_at = datetime.now(UTC)
+    db.add(schedule)
+    await db.flush()

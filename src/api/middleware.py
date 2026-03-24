@@ -1,4 +1,3 @@
-import uuid
 from datetime import UTC, datetime
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -20,24 +19,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         if request.method not in self.MUTATING_METHODS:
             return response
 
-        # Extract user_id from JWT if available
-        user_id = None
-        auth = request.headers.get("authorization", "")
-        if auth.startswith("Bearer "):
-            try:
-                from jose import jwt
-
-                from src.core.config import settings
-
-                payload = jwt.decode(
-                    auth.removeprefix("Bearer "),
-                    settings.secret_key,
-                    algorithms=[settings.algorithm],
-                )
-                user_id = uuid.UUID(payload["sub"])
-            except Exception:
-                pass
-
         # Determine action from method + path
         path = request.url.path
         action = f"{request.method.lower()}.{path.strip('/').replace('/', '.')}"
@@ -47,7 +28,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             async with async_session() as session:
                 # Write to standard audit log
                 log_entry = AuditLog(
-                    user_id=user_id,
                     action=action,
                     resource_type=_extract_resource_type(path),
                     detail={
@@ -66,7 +46,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 await write_worm_entry(
                     session,
                     action=action,
-                    user_id=user_id,
+                    user_id=None,
                     resource_type=_extract_resource_type(path),
                     detail={
                         "method": request.method,
@@ -77,8 +57,9 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 )
 
                 await session.commit()
-        except Exception:
-            pass  # Audit logging should never break the request
+        except Exception as exc:
+            import sys
+            print(f"[AUDIT] Failed to write audit log: {exc!r}", file=sys.stderr)
 
         return response
 

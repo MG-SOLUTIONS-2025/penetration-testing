@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 
 import redis as redis_lib
 from celery import shared_task
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update as sa_update
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
-from src.core.models import Engagement, Finding, Scan, Target
+from src.core.models import Engagement, ExploitAttempt, Finding, Report, Scan, Target
 from src.core.scanning.headers import check_headers
 from src.core.scanning.nmap import parse_nmap_xml
 from src.core.scanning.nuclei import parse_nuclei_jsonl
@@ -67,6 +67,8 @@ def _validate_scope_sync(db: Session, target_value: str, engagement_id: uuid.UUI
 
 
 def _save_findings(db: Session, scan_id: str, findings_data: list[dict]):
+    from src.core.scoring_vpr import compute_vpr
+
     for f in findings_data:
         existing = db.execute(
             select(Finding).where(
@@ -76,6 +78,22 @@ def _save_findings(db: Session, scan_id: str, findings_data: list[dict]):
         ).scalar_one_or_none()
 
         if existing:
+            # Mark as recurring rather than skipping
+            existing.status = "recurring"
+            existing.scan_id = uuid.UUID(scan_id)
+            if existing.first_seen_at is None:
+                existing.first_seen_at = datetime.now(UTC)
+            # Recalculate VPR if CVSS score available
+            if f.get("cvss_score") is not None:
+                vpr, factors = compute_vpr(
+                    cvss_score=f["cvss_score"],
+                    exploit_maturity=f.get("exploit_maturity", "unproven"),
+                    threat_intel_active=f.get("threat_intel_active", False),
+                    asset_criticality=f.get("asset_criticality", "medium"),
+                )
+                existing.vpr_score = vpr
+                existing.vpr_factors = factors
+            db.add(existing)
             continue
 
         finding = Finding(
@@ -88,21 +106,34 @@ def _save_findings(db: Session, scan_id: str, findings_data: list[dict]):
             detail=f.get("detail"),
             raw_output=f.get("raw_output"),
             fingerprint=f["fingerprint"],
+            first_seen_at=datetime.now(UTC),
         )
+
+        # Wire VPR scoring
+        if f.get("cvss_score") is not None:
+            vpr, factors = compute_vpr(
+                cvss_score=f["cvss_score"],
+                exploit_maturity=f.get("exploit_maturity", "unproven"),
+                threat_intel_active=f.get("threat_intel_active", False),
+                asset_criticality=f.get("asset_criticality", "medium"),
+            )
+            finding.vpr_score = vpr
+            finding.vpr_factors = factors
+
         db.add(finding)
 
     db.commit()
 
 
 def _update_scan_status(db: Session, scan_id: str, status: str, error: str | None = None):
-    scan = db.execute(select(Scan).where(Scan.id == uuid.UUID(scan_id))).scalar_one()
-    scan.status = status
+    values: dict = {"status": status}
     if status == "running":
-        scan.started_at = datetime.now(UTC)
+        values["started_at"] = datetime.now(UTC)
     elif status in ("completed", "failed"):
-        scan.completed_at = datetime.now(UTC)
+        values["completed_at"] = datetime.now(UTC)
     if error:
-        scan.error_message = error
+        values["error_message"] = error
+    db.execute(sa_update(Scan).where(Scan.id == uuid.UUID(scan_id)).values(**values))
     db.commit()
 
 
@@ -484,17 +515,39 @@ def run_zap_scan(self, scan_id: str):
 
 @shared_task(bind=True, name="src.core.tasks.generate_report")
 def generate_report(
-    self, engagement_id: str, template: str = "full.html", output_format: str = "html"
+    self,
+    engagement_id: str,
+    template: str = "full.html",
+    output_format: str = "html",
+    user_id: str | None = None,
 ):
-    """Generate a report and store/return it."""
+    """Generate a report and persist it to the database."""
     from src.core.reports.generator import ReportGenerator
 
     generator = ReportGenerator()
     with Session(sync_engine) as db:
+        report = Report(
+            engagement_id=uuid.UUID(engagement_id),
+            format=output_format,
+            template=template,
+            generated_by=uuid.UUID(user_id) if user_id else None,
+            celery_task_id=self.request.id,
+        )
+        db.add(report)
+        db.flush()
+
         if output_format == "pdf":
-            generator.generate_pdf(db, uuid.UUID(engagement_id), template)
+            content_bytes = generator.generate_pdf(db, uuid.UUID(engagement_id), template)
+            report.content_bytes = content_bytes
         else:
-            generator.generate_html(db, uuid.UUID(engagement_id), template)
+            content = generator.generate_html(db, uuid.UUID(engagement_id), template)
+            report.content = content
+
+        report.generated_at = datetime.now(UTC)
+        db.commit()
+        db.refresh(report)
+
+    return {"report_id": str(report.id)}
 
 
 @shared_task(bind=True, name="src.core.tasks.push_to_defectdojo")
@@ -519,34 +572,71 @@ def push_to_defectdojo(self, engagement_id: str):
                 engagement.ends_at.isoformat()[:10],
             )
 
-            scans = (
+            findings = (
                 db.execute(
-                    select(Scan).where(
-                        Scan.engagement_id == uuid.UUID(engagement_id),
-                        Scan.status == "completed",
-                    )
+                    select(Finding).where(Finding.engagement_id == uuid.UUID(engagement_id))
                 )
                 .scalars()
                 .all()
             )
 
-            for scan in scans:
-                scan_type_map = {
-                    "nmap": "Nmap Scan",
-                    "nuclei": "Nuclei Scan",
-                }
-                if scan.scan_type in scan_type_map:
-                    findings = (
-                        db.execute(select(Finding).where(Finding.scan_id == scan.id))
-                        .scalars()
-                        .all()
-                    )
-                    if findings and findings[0].raw_output:
-                        await client.import_scan(
-                            dojo_engagement_id,
-                            scan_type_map[scan.scan_type],
-                            findings[0].raw_output.encode(),
-                            f"{scan.scan_type}_output",
-                        )
+            for f in findings:
+                await client.push_finding({
+                    "title": f.title,
+                    "severity": f.severity.capitalize(),
+                    "cvss_score": f.cvss_score,
+                    "cwe": f.cwe_id,
+                    "description": f.detail or {},
+                    "target": f.target_value,
+                })
 
     asyncio.run(_push())
+
+
+@shared_task(bind=True, name="src.core.tasks.run_metasploit_exploit")
+def run_metasploit_exploit(self, attempt_id: str, module_name: str, options: dict):
+    """Run a Metasploit exploit module via RPC and record outcome."""
+    from src.core.metasploit import MetasploitClient
+
+    with Session(sync_engine) as db:
+        attempt = db.execute(
+            select(ExploitAttempt).where(ExploitAttempt.id == uuid.UUID(attempt_id))
+        ).scalar_one()
+
+        try:
+            attempt.status = "running"
+            db.commit()
+
+            client = MetasploitClient(
+                settings.metasploit_host,
+                settings.metasploit_port,
+                settings.metasploit_password,
+            )
+            result = client.run_exploit(module_name, options)
+
+            attempt.status = "success"
+            attempt.output = json.dumps(result)
+            db.commit()
+
+        except Exception as e:
+            attempt.status = "failed"
+            attempt.output = str(e)
+            db.commit()
+            raise
+
+
+@shared_task(bind=True, name="src.core.tasks.run_ddos_test")
+def run_ddos_test(
+    self, engagement_id: str, target_url: str, rps: int, duration_seconds: int
+):
+    """Run a k6-based DDoS resilience test."""
+    from src.core.ddos.controller import ResilienceController
+
+    controller = ResilienceController()
+    controller.validate_config(rps, duration_seconds)
+    cmd = controller.build_k6_command(target_url, rps, duration_seconds)
+    result = runner.run_in_container(
+        "grafana/k6", cmd, timeout=duration_seconds + 60
+    )
+    _publish_progress(engagement_id, 100, f"DDoS test completed: {result.stdout[:200]}")
+    return {"output": result.stdout}
