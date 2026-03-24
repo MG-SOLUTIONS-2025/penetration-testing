@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models import ScanSchedule
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/schedules", tags=["schedules"])
 
@@ -37,8 +37,8 @@ class ScheduleRead(BaseModel):
     config: dict | None
     cron_expression: str
     is_active: bool
-    last_run_at: str | None = None
-    next_run_at: str | None = None
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -48,7 +48,7 @@ async def create_schedule(
     body: ScheduleCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_engagement_or_403(db, body.engagement_id)
+    await get_engagement_or_404(db, body.engagement_id)
 
     schedule = ScanSchedule(
         engagement_id=body.engagement_id,

@@ -83,6 +83,18 @@ class DefectDojoClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def push_finding(self, engagement_id: int, finding_data: dict) -> dict:
+        async with self._client() as client:
+            resp = await client.post(
+                "/api/v2/findings/",
+                json={
+                    "test": engagement_id,
+                    **finding_data,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def get_findings(self, engagement_id: int) -> list[dict]:
         async with self._client() as client:
             resp = await client.get(

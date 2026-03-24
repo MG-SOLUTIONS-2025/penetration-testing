@@ -581,13 +581,13 @@ def push_to_defectdojo(self, engagement_id: str):
             )
 
             for f in findings:
-                await client.push_finding({
+                await client.push_finding(dojo_engagement_id, {
                     "title": f.title,
                     "severity": f.severity.capitalize(),
-                    "cvss_score": f.cvss_score,
+                    "numerical_severity": f.cvss_score or 0,
                     "cwe": f.cwe_id,
-                    "description": f.detail or {},
-                    "target": f.target_value,
+                    "description": json.dumps(f.detail) if f.detail else f.title,
+                    "references": f.target_value,
                 })
 
     asyncio.run(_push())

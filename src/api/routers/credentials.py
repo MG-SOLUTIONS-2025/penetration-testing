@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models import CredentialExposure
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/credentials", tags=["credentials"])
 
@@ -36,7 +36,7 @@ async def check_credentials(
     db: AsyncSession = Depends(get_db),
 ):
     """Check an email against HIBP for known breaches."""
-    await get_engagement_or_403(db, body.engagement_id)
+    await get_engagement_or_404(db, body.engagement_id)
 
     from src.core.hibp.checker import check_email_breaches
 
@@ -70,7 +70,7 @@ async def list_exposures(
     engagement_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     result = await db.execute(
         select(CredentialExposure)

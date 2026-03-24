@@ -6,7 +6,7 @@ from rich.table import Table
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from src.core.config import settings
+from src.core.config import SCAN_TASK_MAP, settings
 from src.core.models import Scan, Target
 from src.worker.celery_app import celery_app
 
@@ -14,27 +14,11 @@ app = typer.Typer(help="Manage scans")
 console = Console()
 engine = create_engine(settings.database_url_sync)
 
-SCAN_TASK_MAP = {
-    "nmap": "src.core.tasks.run_nmap_scan",
-    "subfinder": "src.core.tasks.run_subfinder_scan",
-    "nuclei": "src.core.tasks.run_nuclei_scan",
-    "sslyze": "src.core.tasks.run_sslyze_scan",
-    "headers": "src.core.tasks.run_headers_scan",
-    "amass": "src.core.tasks.run_amass_scan",
-    "masscan": "src.core.tasks.run_masscan_scan",
-    "nikto": "src.core.tasks.run_nikto_scan",
-    "ffuf": "src.core.tasks.run_ffuf_scan",
-    "sqlmap": "src.core.tasks.run_sqlmap_scan",
-    "wpscan": "src.core.tasks.run_wpscan_scan",
-    "zap": "src.core.tasks.run_zap_scan",
-}
-
 
 @app.command("run")
 def run_scan(
     scan_type: str = typer.Argument(help="nmap|subfinder|nuclei|sslyze|headers"),
     target_id: str = typer.Option(..., "--target-id", "-t"),
-    user_id: str = typer.Option(..., "--user-id", "-u"),
     config: str = typer.Option(None, "--config", "-c", help="JSON config string"),
 ):
     """Dispatch a scan."""
@@ -59,7 +43,6 @@ def run_scan(
             scan_type=scan_type,
             status="pending",
             config=scan_config,
-            created_by=uuid.UUID(user_id),
         )
         db.add(scan)
         db.commit()

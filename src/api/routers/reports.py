@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.models import Report
 from src.worker.celery_app import celery_app
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
 
@@ -40,7 +40,7 @@ async def generate_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Dispatch async report generation via Celery."""
-    await get_engagement_or_403(db, body.engagement_id)
+    await get_engagement_or_404(db, body.engagement_id)
 
     task = celery_app.send_task(
         "src.core.tasks.generate_report",
@@ -55,7 +55,7 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
 ):
     """List persisted reports for an engagement."""
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     result = await db.execute(
         select(Report)
@@ -76,7 +76,7 @@ async def download_report(
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    await get_engagement_or_403(db, report.engagement_id)
+    await get_engagement_or_404(db, report.engagement_id)
 
     if report.format == "pdf" and report.content_bytes:
         return Response(
@@ -99,25 +99,14 @@ async def get_report_html(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate and return HTML report synchronously (for small reports)."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
-    from src.core.config import settings
+    from src.core.database import SyncSession
     from src.core.reports.generator import ReportGenerator
 
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
-    sync_engine = create_engine(settings.database_url_sync)
     generator = ReportGenerator()
-
-    try:
-        with Session(sync_engine) as sync_db:
-            try:
-                html = generator.generate_html(sync_db, engagement_id, template)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        sync_engine.dispose()
+    with SyncSession() as sync_db:
+        html = generator.generate_html(sync_db, engagement_id, template)
 
     return HTMLResponse(content=html)
 
@@ -129,25 +118,14 @@ async def get_report_pdf(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate and return PDF report."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
-    from src.core.config import settings
+    from src.core.database import SyncSession
     from src.core.reports.generator import ReportGenerator
 
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
-    sync_engine = create_engine(settings.database_url_sync)
     generator = ReportGenerator()
-
-    try:
-        with Session(sync_engine) as sync_db:
-            try:
-                pdf_bytes = generator.generate_pdf(sync_db, engagement_id, template)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        sync_engine.dispose()
+    with SyncSession() as sync_db:
+        pdf_bytes = generator.generate_pdf(sync_db, engagement_id, template)
 
     return Response(
         content=pdf_bytes,

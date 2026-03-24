@@ -43,3 +43,20 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Canonical mapping of scan type names to Celery task paths.
+# Used by API router, CLI, and beat scheduler.
+SCAN_TASK_MAP: dict[str, str] = {
+    "nmap": "src.core.tasks.run_nmap_scan",
+    "subfinder": "src.core.tasks.run_subfinder_scan",
+    "nuclei": "src.core.tasks.run_nuclei_scan",
+    "sslyze": "src.core.tasks.run_sslyze_scan",
+    "headers": "src.core.tasks.run_headers_scan",
+    "amass": "src.core.tasks.run_amass_scan",
+    "masscan": "src.core.tasks.run_masscan_scan",
+    "nikto": "src.core.tasks.run_nikto_scan",
+    "ffuf": "src.core.tasks.run_ffuf_scan",
+    "sqlmap": "src.core.tasks.run_sqlmap_scan",
+    "wpscan": "src.core.tasks.run_wpscan_scan",
+    "zap": "src.core.tasks.run_zap_scan",
+}

@@ -1,11 +1,16 @@
+import logging
+import sys
 from datetime import UTC, datetime
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
+from src.core.audit import write_worm_entry
 from src.core.database import async_session
 from src.core.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 
 class AuditLogMiddleware(BaseHTTPMiddleware):
@@ -19,15 +24,13 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         if request.method not in self.MUTATING_METHODS:
             return response
 
-        # Determine action from method + path
         path = request.url.path
         action = f"{request.method.lower()}.{path.strip('/').replace('/', '.')}"
         client_ip = request.client.host if request.client else None
 
         try:
             async with async_session() as session:
-                # Write to standard audit log
-                log_entry = AuditLog(
+                session.add(AuditLog(
                     action=action,
                     resource_type=_extract_resource_type(path),
                     detail={
@@ -37,11 +40,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                         "client": client_ip,
                         "timestamp": datetime.now(UTC).isoformat(),
                     },
-                )
-                session.add(log_entry)
-
-                # Write to WORM audit log (hash-chained)
-                from src.core.audit import write_worm_entry
+                ))
 
                 await write_worm_entry(
                     session,
@@ -57,16 +56,14 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 )
 
                 await session.commit()
-        except Exception as exc:
-            import sys
-            print(f"[AUDIT] Failed to write audit log: {exc!r}", file=sys.stderr)
+        except Exception:
+            logger.warning("Failed to write audit log", exc_info=True)
 
         return response
 
 
 def _extract_resource_type(path: str) -> str | None:
     parts = path.strip("/").split("/")
-    # /api/v1/{resource}/... -> resource
     if len(parts) >= 3 and parts[0] == "api":
         return parts[2]
     return None

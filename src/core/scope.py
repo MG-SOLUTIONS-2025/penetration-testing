@@ -17,18 +17,22 @@ class EngagementExpiredError(Exception):
     pass
 
 
-async def check_engagement_active(db: AsyncSession, engagement_id: uuid.UUID) -> Engagement:
-    result = await db.execute(select(Engagement).where(Engagement.id == engagement_id))
-    engagement = result.scalar_one_or_none()
-    if not engagement:
-        raise ValueError(f"Engagement {engagement_id} not found")
-
+def verify_engagement_dates(engagement: Engagement) -> None:
+    """Raise EngagementExpiredError if the engagement is outside its authorization window."""
     now = datetime.now(UTC)
     if now < engagement.starts_at.replace(tzinfo=UTC):
         raise EngagementExpiredError("Engagement has not started yet")
     if now > engagement.ends_at.replace(tzinfo=UTC):
         raise EngagementExpiredError("Engagement authorization has expired")
 
+
+async def check_engagement_active(db: AsyncSession, engagement_id: uuid.UUID) -> Engagement:
+    result = await db.execute(select(Engagement).where(Engagement.id == engagement_id))
+    engagement = result.scalar_one_or_none()
+    if not engagement:
+        raise ValueError(f"Engagement {engagement_id} not found")
+
+    verify_engagement_dates(engagement)
     return engagement
 
 

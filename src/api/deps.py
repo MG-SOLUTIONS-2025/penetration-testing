@@ -19,7 +19,7 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
             raise
 
 
-async def get_engagement_or_403(
+async def get_engagement_or_404(
     db: AsyncSession,
     engagement_id: uuid.UUID,
 ) -> Engagement:

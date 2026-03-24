@@ -1,6 +1,6 @@
-from collections.abc import AsyncGenerator
-
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from src.core.config import settings
 
@@ -14,12 +14,7 @@ engine = create_async_engine(
 )
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
-
-async def get_db() -> AsyncGenerator[AsyncSession]:
-    async with async_session() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+# Shared sync engine for Celery workers, report generators, and SARIF export.
+# Created once at import time; reuses a connection pool across requests.
+sync_engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
+SyncSession = sessionmaker(sync_engine)

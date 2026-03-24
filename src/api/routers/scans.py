@@ -6,30 +6,16 @@ from slowapi.util import get_remote_address
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import SCAN_TASK_MAP
 from src.core.models import Scan, Target
 from src.core.schemas import PaginatedResponse, ScanCreate, ScanRead
-from src.core.scope import EngagementExpiredError, check_engagement_active
+from src.core.scope import EngagementExpiredError, verify_engagement_dates
 from src.worker.celery_app import celery_app
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/scans", tags=["scans"])
 limiter = Limiter(key_func=get_remote_address)
-
-SCAN_TASK_MAP = {
-    "nmap": "src.core.tasks.run_nmap_scan",
-    "subfinder": "src.core.tasks.run_subfinder_scan",
-    "nuclei": "src.core.tasks.run_nuclei_scan",
-    "sslyze": "src.core.tasks.run_sslyze_scan",
-    "headers": "src.core.tasks.run_headers_scan",
-    "amass": "src.core.tasks.run_amass_scan",
-    "masscan": "src.core.tasks.run_masscan_scan",
-    "nikto": "src.core.tasks.run_nikto_scan",
-    "ffuf": "src.core.tasks.run_ffuf_scan",
-    "sqlmap": "src.core.tasks.run_sqlmap_scan",
-    "wpscan": "src.core.tasks.run_wpscan_scan",
-    "zap": "src.core.tasks.run_zap_scan",
-}
 
 
 @router.post("/", response_model=ScanRead, status_code=201)
@@ -42,11 +28,11 @@ async def create_scan(
     if body.scan_type not in SCAN_TASK_MAP:
         raise HTTPException(status_code=400, detail=f"Invalid scan type: {body.scan_type}")
 
-    # Validate engagement is active
-    await get_engagement_or_403(db, body.engagement_id)
+    # Validate engagement exists and is within authorization window
+    engagement = await get_engagement_or_404(db, body.engagement_id)
     try:
-        await check_engagement_active(db, body.engagement_id)
-    except (EngagementExpiredError, ValueError) as e:
+        verify_engagement_dates(engagement)
+    except EngagementExpiredError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     # Validate target exists and is in scope
@@ -153,20 +139,13 @@ async def export_sarif(
     db: AsyncSession = Depends(get_db),
 ):
     """Export findings as SARIF 2.1.0 JSON."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SyncSession
-
-    from src.core.config import settings
+    from src.core.database import SyncSession
     from src.core.export.sarif import findings_to_sarif
 
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
-    sync_engine = create_engine(settings.database_url_sync)
-    try:
-        with SyncSession(sync_engine) as sync_db:
-            sarif = findings_to_sarif(sync_db, engagement_id)
-    finally:
-        sync_engine.dispose()
+    with SyncSession() as sync_db:
+        sarif = findings_to_sarif(sync_db, engagement_id)
 
     return sarif
 

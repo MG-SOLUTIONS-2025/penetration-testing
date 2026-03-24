@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.compliance.mapper import get_all_frameworks, map_finding_to_frameworks
 from src.core.models import Finding
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/compliance", tags=["compliance"])
 
@@ -26,7 +26,7 @@ async def engagement_compliance(
     db: AsyncSession = Depends(get_db),
 ):
     """Get compliance mapping summary for an engagement."""
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     result = await db.execute(select(Finding).where(Finding.engagement_id == engagement_id))
     findings = result.scalars().all()

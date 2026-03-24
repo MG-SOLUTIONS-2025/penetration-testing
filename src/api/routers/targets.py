@@ -9,7 +9,7 @@ from src.core.models import Target
 from src.core.scanning.sanitize import SanitizationError, validate_target_value
 from src.core.schemas import PaginatedResponse, TargetCreate, TargetRead
 
-from ..deps import get_db, get_engagement_or_403
+from ..deps import get_db, get_engagement_or_404
 
 router = APIRouter(prefix="/api/v1/engagements/{engagement_id}/targets", tags=["targets"])
 
@@ -20,7 +20,7 @@ async def create_target(
     body: TargetCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     # Validate target value against injection
     try:
@@ -48,7 +48,7 @@ async def list_targets(
     page_size: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     query = select(Target).where(
         Target.engagement_id == engagement_id,
@@ -72,7 +72,7 @@ async def delete_target(
     target_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    await get_engagement_or_403(db, engagement_id)
+    await get_engagement_or_404(db, engagement_id)
 
     result = await db.execute(
         select(Target).where(
