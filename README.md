@@ -69,20 +69,34 @@ Self-hosted penetration testing platform. Manage engagements, run scans via cont
 - Port 3102 available
 - (Optional) Pull scanner images ahead of time: `make pull-scanners`
 
-### Deploy
+### Clone and Deploy
 
 ```bash
+git clone git@mguan:MG-SOLUTIONS-2025/penetration-testing.git
+cd penetration-testing
 cp .env.example .env      # edit passwords/keys as needed
 make deploy               # builds, migrates, starts everything
 ```
 
-Open `http://localhost:3102` for the dashboard. API docs at `http://localhost:3102/docs`.
+First deploy takes a few minutes to build images and run migrations. Once complete:
+
+- Dashboard: `http://localhost:3102`
+- API docs (Swagger): `http://localhost:3102/docs`
+- Celery monitor: `http://localhost:3102/flower/` (default login: `admin` / `flower_dev_2026`)
 
 ### Verify
 
 ```bash
 curl http://localhost:3102/health
 # {"api":"ok","database":"ok","redis":"ok"}
+```
+
+### Stop / Restart
+
+```bash
+make down                 # stop all services (data preserved)
+make up                   # restart
+make logs                 # tail all logs
 ```
 
 ## API Reference
